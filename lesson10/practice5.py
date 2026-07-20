@@ -1,55 +1,118 @@
 """專案 01：開啟真實網頁，檢查標題並留下截圖。"""
-# 以上為此程式的文件字串，說明這個專案的目的：開啟真實網頁、檢查標題並截圖。
 
 import argparse
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+
 
 # 設定目標網址與截圖輸出目錄
 URL = "https://example.com/"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 
-def check_website(browser_name: str = "chromium") -> None:
-    """使用指定的瀏覽器開啟網頁，檢查標題並進行截圖。"""
-    # 確保輸出目錄存在（若不存在則建立）
+@dataclass
+class WebsiteCheckResult:
+    """網站健康檢查的結果資料。"""
+
+    url: str
+    browser: str
+    headless: bool
+    timeout: int
+    status: int | None = None
+    response_time_ms: float = 0.0
+    page_title: str = ""
+    main_heading: str = ""
+    final_url: str = ""
+    screenshot_path: Path | None = None
+    error: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+def check_website(
+    url: str = URL,
+    browser_name: str = "chromium",
+    headless: bool = True,
+    timeout: int = 30000,
+) -> WebsiteCheckResult:
+    """使用 Playwright 開啟目標網頁，回傳檢查結果（不輸出任何內容）。"""
+    result = WebsiteCheckResult(url=url, browser=browser_name, headless=headless, timeout=timeout)
+
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # 啟動 Playwright 並操作瀏覽器
-    with sync_playwright() as playwright:
-        # 根據參數取得對應的瀏覽器類型（chromium / firefox / webkit）
-        browser_type = getattr(playwright, browser_name)
-        # 以無頭模式啟動瀏覽器（不顯示視窗）
-        browser = browser_type.launch(headless=True)
-        # 建立新頁面，設定解析度為 1280x720
-        page = browser.new_page(viewport={"width": 1280, "height": 720})
+    start = time.perf_counter()
+    try:
+        with sync_playwright() as playwright:
+            browser_type = getattr(playwright, browser_name)
+            browser = browser_type.launch(headless=headless, timeout=timeout)
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
 
-        # 導航到目標網址，等待 DOM 內容載入完成
-        response = page.goto(URL, wait_until="domcontentloaded")
-        # 取得頁面中 role="heading" 且名稱為 "Example Domain" 的元素文字
-        heading = page.get_by_role("heading", name="Example Domain").inner_text()
-        # 設定截圖檔案路徑
-        screenshot = OUTPUT_DIR / f"homepage_{browser_name}.png"
-        # 拍攝全頁截圖並儲存
-        page.screenshot(path=screenshot, full_page=True)
+            response = page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            elapsed = (time.perf_counter() - start) * 1000
+            result.response_time_ms = round(elapsed, 1)
 
-        # 輸出結果資訊
-        print(f"瀏覽器: {browser_name}")
-        print(f"HTTP 狀態: {response.status if response else '無回應'}")
-        print(f"頁面標題: {page.title()}")
-        print(f"主標題: {heading}")
-        print(f"截圖: {screenshot}")
-        # 關閉瀏覽器
-        browser.close()
+            if response:
+                result.status = response.status
+                result.final_url = response.url
+            result.page_title = page.title()
+            result.main_heading = page.get_by_role("heading").first.inner_text()
+
+            screenshot = OUTPUT_DIR / f"homepage_{browser_name}.png"
+            page.screenshot(path=screenshot, full_page=True)
+            result.screenshot_path = screenshot
+
+            browser.close()
+    except Exception as e:
+        elapsed = (time.perf_counter() - start) * 1000
+        result.response_time_ms = round(elapsed, 1)
+        result.error = str(e)
+
+    return result
+
+
+def print_result(result: WebsiteCheckResult) -> None:
+    """將 WebsiteCheckResult 輸出到終端機（供 CLI 使用）。"""
+    print(f"瀏覽器: {result.browser}")
+    if result.error:
+        print(f"錯誤: {result.error}")
+    else:
+        print(f"HTTP 狀態: {result.status if result.status else '無回應'}")
+        print(f"回應時間: {result.response_time_ms} ms")
+        print(f"頁面標題: {result.page_title}")
+        print(f"主標題: {result.main_heading}")
+        print(f"最終 URL: {result.final_url}")
+        print(f"截圖: {result.screenshot_path}")
+
+
+def main() -> None:
+    """命令列入口：解析引數並執行網站檢查。"""
+    parser = argparse.ArgumentParser(description="網站健康檢查工具")
+    parser.add_argument("--url", default=URL, help="目標網址")
+    parser.add_argument(
+        "--browser",
+        choices=["chromium", "firefox", "webkit"],
+        default="chromium",
+        help="瀏覽器類型",
+    )
+    parser.add_argument("--timeout", type=int, default=30000, help="等待超時（毫秒）")
+    parser.add_argument(
+        "--no-headless",
+        action="store_false",
+        dest="headless",
+        help="顯示瀏覽器視窗（預設為無頭模式）",
+    )
+    args = parser.parse_args()
+
+    result = check_website(
+        url=args.url,
+        browser_name=args.browser,
+        headless=args.headless,
+        timeout=args.timeout,
+    )
+    print_result(result)
 
 
 if __name__ == "__main__":
-    # 解析命令列引數：可指定 --browser，預設為 chromium
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--browser", choices=["chromium", "firefox", "webkit"], default="chromium"
-    )
-    args = parser.parse_args()
-    # 執行檢查
-    check_website(args.browser)
+    main()

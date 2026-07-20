@@ -1,0 +1,10 @@
+playwright>=1.61.0
+Pillow>=10.0.0
+
+# 測試
+pytest>=8.0.0
+
+# 注意：tkinter 為 Python 標準函式庫，不需另行安裝。
+# 若使用 uv，執行以下指令：
+#   uv pip install -r requirements.txt
+#   playwright install  # 下載瀏覽器二進位檔
